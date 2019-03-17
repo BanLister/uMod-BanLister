@@ -6,14 +6,15 @@ using System.Linq;
 
 namespace Oxide.Plugins
 {
-    [Info("Ban Lister", "Slut", "1.0.0")]
-    class BanLister : CovalencePlugin
+    [Info("Ban Lister", "Slut", "1.2.0")]
+    [Description("Shared Ban System (banlister.com)")]
+    internal class BanLister : CovalencePlugin
     {
         public static BanLister Instance;
-        const string BaseGetUrl = "http://api.banlister.com/retrieve.php?steamid=";
-        const string AdminPermission = "banlister.admin";
+        private const string BaseGetUrl = "http://api.banlister.com/retrieve.php?steamid={0}";
+        private const string AdminPermission = "banlister.admin";
 
-        class BanData
+        private class BanData
         {
             [JsonProperty("steamid")]
             public string SteamID { get; set; }
@@ -65,37 +66,37 @@ namespace Oxide.Plugins
         {
             lang.RegisterMessages(new Dictionary<string, string>
             {
-                ["BanReason"] = "Sorry {0}, but this server is protected by Ban Lister, ensuring a safe community!",
-                ["AdminMessage"] = "[Ban Lister] <color=#ff4c4c>{0}</color> <color=silver>has <color=lime>{1}</color> bans in the past month!</color>"
+                ["BanReason"] = "Sorry {0}, but this server is protected by BanLister.com, ensuring a safe community!",
+                ["AdminMessage"] = "[Ban Lister] <color=#ff4c4c>{0}</color> <color=silver>has <color=lime>{1}</color> bans in the past month!</color>",
+                ["BanLogged"] = "Succesfully logged ban!",
+                ["BanNotLogged"] = "Failed to log ban! {0}"
             }, this);
         }
-        void Loaded()
+
+        private void OnServerInitialized()
         {
             Instance = this;
             permission.RegisterPermission(AdminPermission, this);
-            foreach (var player in covalence.Players.Connected)
-            {
-                OnUserConnected(player);
-            }
+            players.Connected.ToList().ForEach(OnUserConnected);
         }
         private void OnUserConnected(IPlayer player)
         {
-            webrequest.Enqueue(GetUrl(player.Id), null, (code, response) =>
+            webrequest.Enqueue(GetUrl(player.Id), null, (code, raw_response) =>
             {
-                if (code == 200)
+                if (code == 200 && !string.IsNullOrEmpty(raw_response))
                 {
-                    response = response.Trim();
-                    if (response != "null")
+                    raw_response = raw_response.Trim();
+                    if (raw_response.StartsWith("[") || raw_response.StartsWith("{"))
                     {
-                        BanData.Get[] list = JsonConvert.DeserializeObject<BanData.Get[]>(response);
+                        BanData.Get[] list = JsonConvert.DeserializeObject<BanData.Get[]>(raw_response);
                         BanData.Get[] pastmonth = list.Where(x => (DateTime.Now - x.TimeStamp).Days <= 31).ToArray();
                         if (list.Length >= config.MaxBans && config.KickOnMaxBans)
                         {
-                            player.Kick(GetLang("BanReason", player.Name));
+                            player.Kick(GetLang("BanReason", player.Id, player.Name));
                         }
                         if (pastmonth.Any())
                         {
-                            foreach (IPlayer admin in covalence.Players.Connected.Where(x => player.HasPermission(AdminPermission)))
+                            foreach (IPlayer admin in players.Connected.Where(x => player.HasPermission(AdminPermission)))
                             {
                                 SendMessage(admin, "AdminMessage", player.Name, pastmonth.Length);
                             }
@@ -104,35 +105,24 @@ namespace Oxide.Plugins
                 }
                 else
                 {
-                    PrintError("API RESPONDED WITH CODE {0}\n{1}", code, response);
+                    PrintError("API RESPONDED WITH CODE {0}\n{1}", code, raw_response);
                 }
             }, this, Core.Libraries.RequestMethod.GET);
         }
+
         private string GetUrl(string steamid)
         {
-            return string.Concat(BaseGetUrl, steamid);
+            return string.Format(BaseGetUrl, steamid);
         }
-        private string GetLang(string key, params object[] args)
+
+        private string GetLang(string key, string id = null, params object[] args)
         {
-            if (args.Length > 0)
-            {
-                return string.Format(lang.GetMessage(key, this), args);
-            }
-            else
-            {
-                return lang.GetMessage(key, this);
-            }
+            string message = lang.GetMessage(key, this, id);
+            return args?.Length > 0 ? string.Format(message, args) : message;
         }
         private void SendMessage(IPlayer player, string key, params object[] args)
         {
-            if (args.Length > 0)
-            {
-                player.Reply(string.Format(lang.GetMessage(key, this, player.Id), args));
-            }
-            else
-            {
-               player.Reply(lang.GetMessage(key, this, player.Id));
-            }
+            player.Reply(GetLang(key, player.Id, args));
         }
     }
 }
